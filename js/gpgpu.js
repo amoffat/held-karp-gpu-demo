@@ -227,9 +227,13 @@
   assertFloatFBO = function(gl) {
     var fbo, tex, type;
     tex = createTexture(gl, 100, 100);
-    fbo = createFBO(gl, tex);
+    try {
+      fbo = createFBO(gl, tex);
+    } catch (error) {
+      throw "Writing (using FBO) float textures unsupported.\nIf using Safari, try Chrome or Firefox on desktop.";
+    }
     type = getFBOType(gl, fbo);
-    return assert(type === gl.FLOAT, "Reading (readPixels) float textures unsupported.\nIf using Safari, try Chrome or Firefox.");
+    return assert(type === gl.FLOAT, "Reading (readPixels) float textures unsupported.\nIf using Safari, try Chrome or Firefox on desktop.");
   };
 
   this.Storage = (function() {
