@@ -1,0 +1,590 @@
+<!DOCTYPE html>
+<html>
+<head>
+<script src="https://code.jquery.com/jquery-3.1.1.min.js" integrity="sha256-hVVnYaiADRTO2PzUGmuLJr8BLUSjGIZsDYGmIJLv2b8=" crossorigin="anonymous"></script>
+
+<link rel="stylesheet" href="//cdnjs.cloudflare.com/ajax/libs/highlight.js/9.9.0/styles/default.min.css">
+<script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/9.9.0/highlight.min.js"></script>
+
+
+<!-- Latest compiled and minified CSS -->
+<link rel="stylesheet" href="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/css/bootstrap.min.css" integrity="sha384-BVYiiSIFeK1dGmJRAkycuHAHRg32OmUcww7on3RYdg4Va+PmSTsz/K68vbdEjh4u" crossorigin="anonymous">
+
+<!-- Latest compiled and minified JavaScript -->
+<script src="https://maxcdn.bootstrapcdn.com/bootstrap/3.3.7/js/bootstrap.min.js" integrity="sha384-Tc5IQib027qvyjSMfHjOMaLkfuWVxZxUPnCJA7l2mCWNIpG9mGCD8wGNIcPD7Txa" crossorigin="anonymous"></script>
+
+
+
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.7.1/katex.min.css" integrity="sha384-wITovz90syo1dJWVh32uuETPVEtGigN07tkttEqPv+uR2SE/mbQcG7ATL28aI9H0" crossorigin="anonymous">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/KaTeX/0.7.1/katex.min.js" integrity="sha384-/y1Nn9+QQAipbNQWU65krzJralCnuOasHncUFXGkdwntGeSvQicrYkiUBwsgUqc1" crossorigin="anonymous"></script>
+
+<script type="text/javascript" src="https://www.gstatic.com/charts/loader.js"></script>
+
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://cdn.jsdelivr.net/lodash/4.17.4/lodash.min.js"></script>
+    <script src="js/cytoscape.min.js"></script>
+</head>
+
+<body>
+    <h1 style="margin-top:0;">Solving the TSP with WebGL and gpgpu.js</h1>
+
+    <p>
+    In this post, I implement the Held-Karp algorithm, an exact algorithm
+    to the Travelling Salesman Problem (TSP).  The algorithm is then ported
+    to run on the GPU in browser, through WebGL, using gpgpu.js, where it
+    experiences up to a <strong>100x speedup</strong> at the highest node count.
+    <br><br>
+    If you like this post and are looking for a developer in Seattle,
+    take a look at <a target="_blank" href="https://github.com/amoffat">my github</a>
+    for contact information.
+    </p>
+
+    <div>
+        <h2>Demo</h2>
+        <p>
+        Drag the nodes to recalculate the optimal TSP solution.  Switch from
+        the CPU solver to the GPU solver to see the performance differences.
+        Each time the TSP is solved, its benchmark will be averaged and recorded on the chart
+        below the TSP.
+        </p>
+
+
+        <div id="gpu-fail" class="alert alert-danger" style="display:none;">
+            <strong>Uh-oh.</strong>  The GPU solver is unavailable for the
+            following reason: <span id="gpu-fail-reason">Unknown</span>
+        </div>
+
+        <div id="graph-container">
+            <div id="cy"></div>
+
+            <div id="graph-controls">
+                <div class="btn-group-vertical" role="group">
+                    <select id="selected-solver">
+                        <option value="cpu">CPU Solver</option>
+                        <option id="gpu-solver-opt" value="gpu">GPU Solver</option>
+                    </select>
+                    <button class="btn btn-default btn-xs" type="button" id="add-node">Add Node</button>
+                    <button class="btn btn-default btn-xs" type="button" id="remove-node">Remove Node</button>
+                    <button class="btn btn-default btn-xs" type="button" id="randomize-graph">Randomize</button>
+                </div>
+            </div>
+        </div>
+
+        <div id="tsp-perf-chart" style="height:250px; width:100%;"></div>
+        <canvas id="unpack-canvas"></canvas>
+
+    </div>
+
+    <div>
+        <h2>The Held-Karp algorithm crash course</h2>
+        <p>
+            Held-Karp is a
+        <a target="_blank" href="https://en.wikipedia.org/wiki/Dynamic_programming">dynamic programming</a>
+            algorithm based on the key
+            insight that every subpath of the TSP minimum distance problem is itself
+            a minimum distance problem.  What this means, in concrete terms, is
+            that we can compute the optimal costs of the smallest subpaths,
+            cache them, then use them to solve the optimal costs for the next larger
+            subpaths.  By repeating this process with larger and larger subpaths,
+            eventually we solve for the full tour of the TSP.
+        </p>
+
+        <p>
+        It runs in <span class="math">O(2^{n}n^{2})</span> time and requires
+        <span class="math">O(2^{n}n)</span> space.  In other words, for each node we add,
+        our space and time roughly doubles.
+        </p>
+
+        <p>
+        Consider a TSP of 4 nodes, {0, 1, 2, 3}.  We first build a
+        <span class="math">n^2</span> matrix
+        representing the costs of going from each node to each other node.  We'll use
+        this matrix as a lookup table in our algorithm.  Here's an example
+        matrix filled with random costs.  In this particular TSP, notice that
+        <span class="math">A=A^{\mathrm {T}}</span>,
+        or in other words, the matrix is symmetric &mdash; the cost from node i
+        to node j is the same cost as j to i.  Held-Karp also works on asymmetric
+        TSPs as well.
+
+        <table class="table table-bordered" style="width:15em;">
+            <thead>
+                <tr>
+                    <th>&nbsp;</th>
+                    <th>0</th>
+                    <th>1</th>
+                    <th>2</th>
+                    <th>3</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <th>0</th>
+
+                    <td>0</td>
+                    <td>170</td>
+                    <td>186</td>
+                    <td>114</td>
+                </tr>
+                <tr>
+                    <th>1</th>
+
+                    <td>170</td>
+                    <td>0</td>
+                    <td>343</td>
+                    <td>225</td>
+                </tr>
+                <tr>
+                    <th>2</th>
+
+                    <td>186</td>
+                    <td>343</td>
+                    <td>0</td>
+                    <td>134</td>
+                </tr>
+                <tr>
+                    <th>3</th>
+
+                    <td>114</td>
+                    <td>225</td>
+                    <td>134</td>
+                    <td>0</td>
+                </tr>
+            </tbody>
+        </table>
+        </p>
+        
+        <p>
+        Next we'll construct a list of "queries" of the very smallest minimum
+        distance subpaths, which we'll call "level 0" subpaths.  These queries
+        are subproblems that we need to solve in order to build up our
+        solution:
+        </p>
+
+<pre>
+0 to 1, going through no indirect nodes
+0 to 2, going through no indirect nodes
+0 to 3, going through no indirect nodes
+</pre>
+        <p>
+            We call this level 0 because we're going through 0 additional nodes &mdash;
+            the smallest subpath is a direct connection from the starting node to a
+            target node.  Solving the shortest distance for the subpaths in level 0 is trivial;
+            The shortest distance is simply the cost of going from 0 to each node, and we
+            can solve that by using our lookup table.  For each query that we solve, we
+            store the optimum distance that we discovered for that query.
+        </p>
+            
+        <p>
+            The next level of subpaths queries, level 1, introduces 1 indirect node:
+        </p>
+
+<pre>
+0 to 1, through 2
+0 to 1, through 3
+0 to 2, through 1
+0 to 2, through 3
+0 to 3, through 1
+0 to 3, through 2
+</pre>
+
+        <p>
+            Solving level 1 involves looking at level 0 costs and combining it with the
+            cost for the last hop of the subpath.  For example, take <code>0 to 1, through 2</code>.
+            We already know, from level 0 solutions, the cost of 0 to 2, going through no indirect nodes.
+            And our lookup table of costs tells us the cost of the last hop, 2 to 1, so the
+            total cost is the sum of these two costs.  There are actually two additional
+            hidden steps that we are ignoring for level 1, because they aren't strictly necessary,
+            but they'll become required in level 2.
+        </p>
+
+            <p>
+            Level 2 subpaths introduce 2 indirect nodes:
+            </p>
+
+<pre>
+0 to 1, through 2 and 3
+0 to 2, through 1 and 3
+0 to 3, through 1 and 2
+</pre>
+
+            <p>
+            We solve level 2 in the same way we solved level 1, but at this point it's
+            important to introduce the concept of a subproblem's solution's "parent."  The parent node
+            is simply the node that comes directly before the final node in the subpath.
+            For <code>0 to 1, through 2 and 3</code>, there are two possible parent nodes: node 2 or
+            node 3.  This is because the optimal subpath can either be <code>0, 3, 2, 1</code>
+            OR <code>0, 2, 3, 1</code>.  Only one of those two nodes can be the parent, because
+            only one is the optimal subpath.  Recording these parents at each query
+            will be essential to determining our optimal tour, because we'll use them to
+            backtrack our way from the final subpath solution to all of the smaller subpath
+            solutions.
+            </p>
+
+            <p>
+            To determine which parent is optimal, we consult our level 1
+            solutions.  From level 1, we already know the optimal cost of going
+            from 0 to 2, through 3.  We also know the optimal cost of going
+            from 0 to 3, through 2.  And from our lookup table of costs, we know the costs
+            of going from 3 to 1, and from 2 to 1.  Using these values, we can determine
+            the optimal cost and the correct parent node associated with that cost.  We save
+            the optimal cost, as we did we previous levels, and this time the parent node as well.
+            </p>
+
+            <p>
+            Finally, we can construct a level 3 query that satisfies our definition for
+            the TSP:
+            <p>
+
+<pre>
+0 to 0, through 1, 2 and 3
+</pre>
+
+            <p>
+            Solving this level, using the same method as previous levels, will yield
+            the optimal cost.  The optimal parents, however, must be backtracked in
+            order to yield the optimal path.  For example, if the parent for
+            <code>0 to 0, through 1, 2 and 3</code> is 2, then we must look up the parent of
+            <code>0 to 2, through 1 and 3</code>.  If that is 3, then we must look up the parent
+            of <code>0 to 3, through 1</code>, which is obviously 1, which makes the final
+            parent 0, making the full path <code>0, 2, 3, 1, 0</code>.
+            </p>
+
+        <h3>Computing subpath levels</h3>
+
+        <p>
+        You might be wondering how our subpath queries for all the levels were derived.
+        The requirement is that we generate the set of all possible subpaths in the TSP,
+        so with that in mind, it's easy to see that the set of queries is related to
+        the elements of the <a target="_blank" href="https://en.wikipedia.org/wiki/Power_set">power set</a>
+        of our nodes.  A power set is simply the family of all subsets,
+        including the empty set and the original set itself.  For example, for the
+        set {0, 1, 2, 3} minus the starting node 0, the power set would be:
+        </p>
+
+<pre>
+{}
+{1}, {2}, {3}
+{1, 2}, {1, 3}, {2, 3}
+{1, 2, 3}
+</pre>
+
+        <p>
+        To create a subpath level, we simply grab its corresponding powerset
+        level, difference each element with our full set, and cartesian product
+        the result with the original powerset entry.  Let's take powerset level
+        2, entry 0 for example:
+        </p>
+
+        <p>
+        <span class="math">\{1,2\}\times \{\{1,2,3\}-\{1,2\}\} = \{3, \{1, 2\}\}</span>
+        </p>
+
+        <p>
+        So the entry {1, 2} from the powerset level 2 expands to the query {3,
+        {1, 2}} or <code>0 to 3, through 1 and 2</code> in subpath level 2.
+        Repeating this process with every element in the powerset yields the
+        total set of subpath level queries we need to solve.
+        </p>
+
+    </div>
+
+    <div>
+        <h3>Packing data and pixels</h3>
+        <p>
+            The time cost of constructing all possible subpath queries is considerable.
+            Fortunately, this construction is not dependent on the edge costs in
+            a given TSP, so the subpath level queries may be <em>generated beforehand</em>
+            and used for every possible TSP of a given size.
+        </p>
+
+        <p>
+            Since the eventual GPU solver will also need to benefit from this
+            pre-computed data, we'll store the subpath level queries in image files
+            that we can unpack in javascript using a js canvas and also unpack
+            in our gpgpu.js kernel via texture sampling.
+        </p>
+
+        <p>
+            We'll use a python script to compute each subpath level for a
+            given TSP node count, and output that level to its own PNG file.
+        </p>
+
+        <h4>Pixel specification</h4>
+        <p>
+            For a given subpath level, the data we need to represent a query
+            in that level
+            consists of a node to "end at" and a list of nodes to "go through."
+            Representing this data efficiently, though, poses a challenge to
+            scalability, because a level <span class="math">n</span> will
+            have <span class="math">n</span> "go through" nodes.
+            Since we only have 32 bits to work with in our PNG files
+            (8 bits per channel, 4
+            channels), we will impose a hard limit on the number of nodes an
+            input TSP problem can have.  We'll set this hard limit to be 16 nodes.
+        </p>
+            
+        <div class="alert alert-info">
+            We should note that PNG does support 16-bit
+            channels, however, <a target="_blank"
+            href="https://developer.mozilla.org/en-US/docs/Web/API/CanvasRenderingContext2D/getImageData">CanvasRenderingContext2D.getImageData()</a>
+            returns an
+            <a target="_blank" href="https://developer.mozilla.org/en-US/docs/Web/API/ImageData">ImageData</a>
+            with Uint8ClampedArray elements, meaning that all floats will be
+            clamped to uint8 precision.  This limits our precision to 8-bits,
+            regardless of the bit-depth of our PNG.
+        </div>
+
+        <p>
+            The data spec we'll use is as follows:
+        </p>
+
+            <ul>
+                <li>
+                <strong style="color:red;">Red component</strong> - the ending
+                node.  Since we've capped at 16 nodes, and the maximum width of
+                this byte is <span class="math">\log _{2}(15)</span> or 4 bits,
+                we're well below our available 8 bits.
+                </li>
+
+                <li>
+                <strong style="color:green;">Green component</strong> - first
+                half of the "go through" nodes.  We'll use these 8 bits as bit
+                flags representing the node interval [0,7].
+                </li>
+
+                <li>
+                <strong style="color:blue;">Blue component</strong> - the
+                second half of the "go through" nodes.  These 8 bit flags will
+                represent the node interval [8,15].
+                </li>
+
+                <li>
+                <strong>Alpha component</strong> - in theory, we could use this
+                as another set of bit flags for "go through" nodes, however, we
+                cannot set this value
+                    to anything other than full alpha, or 255.  The reason for this is
+                    that 2d canvas contexts apply <a href="https://developer.nvidia.com/content/alpha-blending-pre-or-not-pre">premultiplied alpha</a> upon reading pixels.
+                    What this means is that if we store, say, 128 in our alpha channel,
+                    and 8 in our red channel, when we try to read our red channel, we'll
+                    get back <span class="math">\lfloor{\frac{8*128}{255}}\rfloor</span> or
+                    4.  So due to this browser shortcoming, we cannot use the
+                    alpha channel for anything useful.
+                </li>
+            </ul>
+
+            Here's an example pixel for the query
+            <code>0 to 15, through 1,4,6,7,10,11,13 and 14</code>:
+            <br>
+            <img src="img/unpacking.png" />
+        </p>
+    </div>
+
+    <div>
+        <h2>Intro to gpgpu.js</h2>
+        <p>
+            Gpgpu.js is a toy utility I wrote specifically for this post.  It is designed to
+            abstract away WebGL as a graphics technology and make it behave more like a general-purpose
+            computing technology, like <a target="_blank" href="https://en.wikipedia.org/wiki/CUDA">CUDA</a>
+            or <a target="_blank" href="https://en.wikipedia.org/wiki/OpenCL">OpenCL.</a>
+            This is possible when you consider that
+            GPU-accelerated graphics programming, at the hardware level, is about performing
+            (mostly) independent, highly parallel computations on inputs to produce outputs.
+            For 3d graphics, the inputs are often polygon color, distance from
+            camera, normal vector, light direction, etc, and the output is a pixel color.  We can
+            hijack this so that the inputs are homogeneous problem inputs,
+            packed into pixel components, and our output pixels are problem solutions,
+            packed into pixel components.
+        </p>
+
+        <p>
+            Gpgpu.js is fairly simple.  It allows you to provide an
+            array of inputs and a computation kernel, then perform a mapping of the kernel over the
+            inputs <strong>using GPU parallelism</strong> to produce an array of outputs.
+        </p>
+
+<pre><code class="coffeescript">root = $("#gpgpu")
+engine = getEngine root
+
+kernel = "dst = src + tan(cos(sin(src * src)));"
+input = [1, 2, 3, 4, 5]
+
+output = engine.execute kernel, input</code></pre>
+
+        <p>
+        The gpgpu.js input and output medium is a Storage object, which is a thinly-wrapped
+        OpenGL texture.  Mostly, the transferring of input and output data to and from a
+        Storage object is handled transparently to the user. 
+        </p>
+
+        <p>
+            There are many limitations of gpgpu.js, due to
+            limitations of WebGL itself, which is based on OpenGL ES 2.0, a very limited OpenGL
+            implementation.  It lacks things like dynamic array indexing, hash maps, and bitwise
+            operators &mdash; three things we'll specifically need to implement ourselves
+            in order to implement Held-Karp.
+        </p>
+
+        <p>
+            Despite the limitations, gpgpu.js is still very powerful.  Below is a benchmark of running
+            the following kernel over 100M floats.
+        </p>
+
+            <strong>CPU Kernel:</strong> <code>(num) -> num + Math.tan(Math.cos(Math.sin(num * num)))</code>
+            <br>
+            <strong>GPU Kernel:</strong> <code>dst = src + tan(cos(sin(src * src)));</code>
+
+        <pre>CPU: 6851.25ms
+GPU Total: 1449.29ms
+GPU Execution: 30.64ms
+GPU IO: 1418.65ms
+Theoretical Speedup: 223.59x
+Actual Speedup: 4.73x</pre>
+
+        <p>
+        As you can see from the benchmark, the cost of transferring data to and
+        from the GPU is expensive, and as such, the longer the computations
+        stay inside the GPU, the further
+        amortized the IO penalty becomes.  We'll take advantage of this
+        property when we map Held-Karp to the GPU.
+        </p>
+
+    </div>
+
+    <div>
+        <h2>Mapping Held-Karp to gpgpu.js</h2>
+        <p>
+            The aspect of Held-Karp that immediately stands out as parallelizable is the subpath
+            query solving.  For each possible subpath level, we're performing the same algorithm
+            on the queries it contains:
+            <ol>
+                <li>Iterate through each possible parent and lookup its cost in the previous level</li>
+                <li>For each possible parent, add the cost of the "last leg" of the subpath</li>
+                <li>Perform a reduction on the total list of parent costs, using the minimum operator</li>
+                <li>Remember the parent and cost we determined as optimal</li>
+            </ol>
+
+            At the end of those steps, we'll have solved a single subpath query.  And since each query
+            solution is independent of any other query solutions in the same level, it is the prime
+            candidate for parallelism.
+        </p>
+
+        <p>
+        Implementing these steps seems simple enough in theory, but there are
+        some caveats, mostly due to limitations of WebGL.  Our main limitation
+        is that we cannot write to the same storage that we're reading from.
+        In general, this is a limitation with OpenGL textures, which are the
+        underlying storage mechanisms in gpgpu.js, but we can solve this with
+        the "ping-pong" technique: write to A while reading from B, then write
+        to B while reading from A.  Since solving each level relies only on the
+        previous level, ping ponging works out perfectly.  It also keeps our
+        computation GPU-side for longer, meaning that our GPU IO cost is
+        further amortized over each ping-pong.
+
+        <br>
+        <img src="img/pingpong.png" />
+        </p>
+
+
+        <h3>Kernel data sources</h3>
+
+        <p>
+        According to the Held-Karp algorithm, we're going to need three sources
+        of data:
+
+            <ol>
+                <li>Our node-to-node lookup table of costs</li>
+                <li>The previous level's solutions</li>
+                <li>A description of the current query to solve</li>
+            </ol>
+        </p>
+
+        <p>
+        We define the first data source as a shader-global input variable
+        known in the OpenGL world as a "uniform."  Think of it as a global
+        variable that does not vary (or, is uniform) over our shader
+        execution.  A uniform is a good choice
+        for this data because, while size is limited, lookups are very fast
+        (relative to texture sampling).
+        </p>
+
+        <p>
+        The next data source is the previous level of subpath query solutions.
+        Because we're using the "ping-pong" technique, a previous level
+        query is obtained by sampling the previous output texture.
+        </p>
+        
+        <p>
+        Which brings us to our final data source: the description of the
+        current query.  Due to the sheer number of queries we must work
+        through, we cannot use a uniform (uniforms are size limited), so we
+        must use an additional gpgpu.js Storage object.
+        We populate this texture with the data spec from earlier,
+        with our "end at" and "go through" values encoded in the pixel colors.
+        </p>
+
+
+        <h3>Bringing it all together</h3>
+        <p>
+        In our kernel, we've defined how to get our cost matrix, how to access
+        previous query solutions, and how to determine our current subpath
+        query.  All that's left is stitching these concepts together.  Below is
+        the coffeescript pseudo code representing what is happening under the
+        hood at a very high level:
+        </p>
+
+        <strong>In javascript</strong>
+        <pre><code class="coffeescript">numLevels = _.size nodes
+pingPong = [output1, output2]
+
+# solve the subpath queries at each level
+for curLevel in [0...numLevels]
+    runKernel(pingPong[0], pingPong[1], subpathQueryTex, curLevel, costMatrix)
+    pingPong.reverse()
+
+# looking at the optimal parents recorded in the outputs, we can determine
+# the optimal path through the TSP
+path = backtrackParents pingPong</code></pre>
+
+        <strong>On the GPU</strong>
+        <pre><code class="coffeescript">minCost = Infinity
+minParent = null
+
+[endAt, goThrough] = unpackCurrentComputationQuery inputPixel
+
+for checkParent in numNodes
+    # see if the bit flag for our parent is on, if it is, lets consider
+    # it as a viable parent
+    if bitIsOn goThrough, checkParent
+        # construct the relevant query at our previous level
+        queryGoThrough = bitOff goThrough, checkParent
+        queryEndAt = checkParent
+        lastLevelQuery = [queryEndAt, queryGoThrough]
+
+        # look up our previous level solution now that we have a query
+        solutionIdx = hashQueryToIdx lastLevelQuery
+        subpathCost = lookupQuerySolution lastLevelOutputTex, solutionIdx
+
+        totalSubpathCost = subpathCost + (lookupCost checkParent, endAt)
+        if totalSubpathCost &lt; minCost
+            minCost = totalSubpathCost
+            minParent = checkParent
+
+outputPixel = encodeCostAndParent minCost, minParent</code></pre>
+
+
+        <p>
+        That's it!  If you made it this far, you're a beast.  I urge you to
+        take a look at the actual source code for the GPU kernel, as it
+        contains some interesting solutions to tricky problems that would have
+        taken too long to go into in this post.
+        </p>
+    </div>
+
+
+    <div id="gpgpu"></div>
+</body>
+
+<script src="js/gpgpu.js" ></script>
+<script src="js/heldkarp.js" ></script>
+<script src="js/graph.js" ></script>
+</html>
