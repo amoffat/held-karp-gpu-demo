@@ -78,6 +78,78 @@
     </div>
 
     <div>
+        <h2>Intro to gpgpu.js</h2>
+        <p>
+        <a target="_blank" href="https://github.com/amoffat/gpgpu.js">Gpgpu.js</a>
+        is a toy utility I wrote specifically for this post.  It is designed to
+            abstract away WebGL as a graphics technology and make it behave more like a general-purpose
+            computing technology, like <a target="_blank" href="https://en.wikipedia.org/wiki/CUDA">CUDA</a>
+            or <a target="_blank" href="https://en.wikipedia.org/wiki/OpenCL">OpenCL.</a>
+            This is possible when you consider that
+            GPU-accelerated graphics programming, at the hardware level, is about performing
+            (mostly) independent, highly parallel computations on inputs to produce outputs.
+            For 3d graphics, the inputs are often polygon color, distance from
+            camera, normal vector, light direction, etc, and the output is a pixel color.  We can
+            hijack this so that the inputs are homogeneous problem inputs,
+            packed into pixel components, and our output pixels are problem solutions,
+            packed into pixel components.
+        </p>
+
+        <p>
+            Gpgpu.js is fairly simple.  It allows you to provide an
+            array of inputs and a computation kernel, then perform a mapping of the kernel over the
+            inputs <strong>using GPU parallelism</strong> to produce an array of outputs.
+        </p>
+
+<pre><code class="coffeescript">root = $("#gpgpu")
+engine = getEngine root
+
+kernel = "dst = src + tan(cos(sin(src * src)));"
+input = [1, 2, 3, 4, 5]
+
+output = engine.execute kernel, input</code></pre>
+
+        <p>
+        The gpgpu.js input and output medium is a Storage object, which is a thinly-wrapped
+        OpenGL texture.  Mostly, the transferring of input and output data to and from a
+        Storage object is handled transparently to the user. 
+        </p>
+
+        <p>
+            There are many limitations of gpgpu.js, due to
+            limitations of WebGL itself, which is based on OpenGL ES 2.0, a very limited OpenGL
+            implementation.  It lacks things like dynamic array indexing, hash maps, and bitwise
+            operators &mdash; three things we'll specifically need to implement ourselves
+            in order to implement Held-Karp.
+        </p>
+
+        <p>
+            Despite the limitations, gpgpu.js is still very powerful.  Below is a benchmark of running
+            the following kernel over 100M floats.
+        </p>
+
+            <strong>CPU Kernel:</strong> <code>(num) -> num + Math.tan(Math.cos(Math.sin(num * num)))</code>
+            <br>
+            <strong>GPU Kernel:</strong> <code>dst = src + tan(cos(sin(src * src)));</code>
+
+        <pre>CPU: 6851.25ms
+GPU Total: 1449.29ms
+GPU Execution: 30.64ms
+GPU IO: 1418.65ms
+Theoretical Speedup: 223.59x
+Actual Speedup: 4.73x</pre>
+
+        <p>
+        As you can see from the benchmark, the cost of transferring data to and
+        from the GPU is expensive, and as such, the longer the computations
+        stay inside the GPU, the further
+        amortized the IO penalty becomes.  We'll take advantage of this
+        property when we map Held-Karp to the GPU.
+        </p>
+
+    </div>
+
+    <div>
         <h2>The Held-Karp algorithm crash course</h2>
         <p>
             Held-Karp is a
@@ -379,78 +451,6 @@
             <br>
             <img src="img/unpacking.png" />
         </p>
-    </div>
-
-    <div>
-        <h2>Intro to gpgpu.js</h2>
-        <p>
-        <a target="_blank" href="https://github.com/amoffat/gpgpu.js">Gpgpu.js</a>
-        is a toy utility I wrote specifically for this post.  It is designed to
-            abstract away WebGL as a graphics technology and make it behave more like a general-purpose
-            computing technology, like <a target="_blank" href="https://en.wikipedia.org/wiki/CUDA">CUDA</a>
-            or <a target="_blank" href="https://en.wikipedia.org/wiki/OpenCL">OpenCL.</a>
-            This is possible when you consider that
-            GPU-accelerated graphics programming, at the hardware level, is about performing
-            (mostly) independent, highly parallel computations on inputs to produce outputs.
-            For 3d graphics, the inputs are often polygon color, distance from
-            camera, normal vector, light direction, etc, and the output is a pixel color.  We can
-            hijack this so that the inputs are homogeneous problem inputs,
-            packed into pixel components, and our output pixels are problem solutions,
-            packed into pixel components.
-        </p>
-
-        <p>
-            Gpgpu.js is fairly simple.  It allows you to provide an
-            array of inputs and a computation kernel, then perform a mapping of the kernel over the
-            inputs <strong>using GPU parallelism</strong> to produce an array of outputs.
-        </p>
-
-<pre><code class="coffeescript">root = $("#gpgpu")
-engine = getEngine root
-
-kernel = "dst = src + tan(cos(sin(src * src)));"
-input = [1, 2, 3, 4, 5]
-
-output = engine.execute kernel, input</code></pre>
-
-        <p>
-        The gpgpu.js input and output medium is a Storage object, which is a thinly-wrapped
-        OpenGL texture.  Mostly, the transferring of input and output data to and from a
-        Storage object is handled transparently to the user. 
-        </p>
-
-        <p>
-            There are many limitations of gpgpu.js, due to
-            limitations of WebGL itself, which is based on OpenGL ES 2.0, a very limited OpenGL
-            implementation.  It lacks things like dynamic array indexing, hash maps, and bitwise
-            operators &mdash; three things we'll specifically need to implement ourselves
-            in order to implement Held-Karp.
-        </p>
-
-        <p>
-            Despite the limitations, gpgpu.js is still very powerful.  Below is a benchmark of running
-            the following kernel over 100M floats.
-        </p>
-
-            <strong>CPU Kernel:</strong> <code>(num) -> num + Math.tan(Math.cos(Math.sin(num * num)))</code>
-            <br>
-            <strong>GPU Kernel:</strong> <code>dst = src + tan(cos(sin(src * src)));</code>
-
-        <pre>CPU: 6851.25ms
-GPU Total: 1449.29ms
-GPU Execution: 30.64ms
-GPU IO: 1418.65ms
-Theoretical Speedup: 223.59x
-Actual Speedup: 4.73x</pre>
-
-        <p>
-        As you can see from the benchmark, the cost of transferring data to and
-        from the GPU is expensive, and as such, the longer the computations
-        stay inside the GPU, the further
-        amortized the IO penalty becomes.  We'll take advantage of this
-        property when we map Held-Karp to the GPU.
-        </p>
-
     </div>
 
     <div>
