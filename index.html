@@ -34,7 +34,7 @@
     to the Travelling Salesman Problem (TSP).  The algorithm is then ported
     to run on the GPU in browser, through WebGL, using
     <a target="_blank" href="https://github.com/amoffat/gpgpu.js">gpgpu.js</a>, where it
-    experiences up to a <strong>100x speedup</strong> at the highest node count.
+    experiences up to a <strong>100x speedup</strong> at 16 nodes.
     <br><br>
     If you like this post and are looking for a developer in Seattle,
     take a look at <a target="_blank" href="https://github.com/amoffat">my github</a>
@@ -44,7 +44,8 @@
     <div>
         <h2>Demo</h2>
         <p>
-        Drag the nodes to recalculate the optimal TSP solution.  Switch from
+        Drag the nodes to recalculate the optimal TSP solution.  Add or remove nodes
+        to see how the time to solve changes.  Switch from
         the CPU solver to the GPU solver to see the performance differences.
         Each time the TSP is solved, its benchmark will be averaged and recorded on the chart
         below the TSP.
